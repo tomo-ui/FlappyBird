@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <title>Flappy Bird</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Flappy Bird">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="loading">Ładowanie…</div>
+
+  <div id="corner" hidden>
+    <button id="btn-rank" class="corner-btn" aria-label="Ranking" type="button">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path fill="#e86100" d="M6 2h12v2h3v4a4 4 0 0 1-4 4h-.3A5 5 0 0 1 13 15.9V18h3v2H8v-2h3v-2.1A5 5 0 0 1 7.3 12H7a4 4 0 0 1-4-4V4h3V2Zm-1 4v2a2 2 0 0 0 2 2V6H5Zm14 0h-2v4a2 2 0 0 0 2-2V6Z"/>
+      </svg>
+    </button>
+    <button id="btn-color" class="corner-btn" aria-label="Kolor ptaka" type="button">
+      <span id="swatch"></span>
+    </button>
+  </div>
+
+  <div id="screens"></div>
+
+  <script src="game.js"></script>
+  <script src="pixelfont.js"></script>
+  <script src="ui.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
