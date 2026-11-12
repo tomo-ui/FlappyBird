@@ -42,6 +42,9 @@ html, body {
   overflow-y: auto; pointer-events: none;
 }
 .panel-wrap > * { pointer-events: auto; }
+/* Ranking and name panels sit at the top; only the colour picker is centred. */
+.panel-wrap.top .panel, .panel-wrap.upper .panel { margin: 0 0 auto; }
+.panel-wrap.upper { padding-top: calc(env(safe-area-inset-top) + 60px); }
 .panel {
   margin: auto 0; /* centred vertically like the iOS app, still scrollable when taller than the screen */
   width: 100%; max-width: 380px; padding: 14px;

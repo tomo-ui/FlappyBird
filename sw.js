@@ -1,5 +1,5 @@
 // Offline cache: the whole game is a handful of static files.
-const CACHE = 'flappybird-v5';
+const CACHE = 'flappybird-v6';
 const FILES = [
   './', 'index.html', 'style.css', 'game.js', 'pixelfont.js', 'ui.js', 'main.js', 'manifest.webmanifest',
   'assets/atlas.png', 'assets/atlas.txt',

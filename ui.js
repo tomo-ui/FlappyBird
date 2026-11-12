@@ -186,6 +186,6 @@ const Screens = {
     mark();
     panel.appendChild(grid);
     panel.appendChild(el('div', 'buttons', spriteButton('button_ok', 1.6, () => this.close())));
-    this.show(panel, 'top');
+    this.show(panel, 'center');
   },
 };
