@@ -30,6 +30,17 @@
   <link rel="apple-touch-startup-image" href="splash/1488x2266.png" media="(device-width: 744px) and (device-height: 1133px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
   <link rel="apple-touch-startup-image" href="splash/1536x2048.png" media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
   <link rel="stylesheet" href="style.css">
+  <!-- iPhone home-screen app: the system view can be shorter than the screen, so set the screen height before first paint. -->
+  <script>
+    (function () {
+      if (navigator.standalone !== true) return;
+      var tall = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+      var h = Math.max(innerWidth > innerHeight ? short : tall, innerHeight);
+      var root = document.documentElement;
+      root.style.setProperty('--app-height', h + 'px');
+      root.classList.add('fit-screen');
+    })();
+  </script>
 </head>
 <body>
   <canvas id="game"></canvas>

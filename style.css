@@ -88,3 +88,7 @@ canvas { display: block; }
 }
 .color-cell canvas { width: 100% !important; height: auto !important; max-width: 48px; }
 .color-cell.selected { background: var(--light); border: 5px solid var(--orange); }
+
+/* iPhone home-screen app: force the full screen height (set by the script in index.html / main.js). */
+html.fit-screen, html.fit-screen body { height: var(--app-height); }
+html.fit-screen #screens { bottom: auto; height: var(--app-height); }

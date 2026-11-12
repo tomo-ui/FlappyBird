@@ -77,16 +77,20 @@ async function loadAtlas() {
 
 // MARK: Layout
 
-/** CSS size of the playfield. iOS home-screen apps can report an innerHeight that stops short of the
- *  home-indicator strip, which showed up as a black bar; there the screen size is the truth. */
+/** CSS size of the playfield. iPhones running a home-screen app can report an innerHeight shorter than
+ *  the screen (the home-indicator strip), which left a bar at the bottom. The iPhone screen height is
+ *  fixed, so in that mode it is used outright, and re-checked later because iOS changes innerHeight
+ *  after launch without telling anyone. (Same approach as the Gastrownia app's viewport.ts.) */
+const standaloneIOS = navigator.standalone === true;
+
 function viewSize() {
-  let w = window.innerWidth, h = window.innerHeight;
-  if (navigator.standalone === true && h > w) {
-    const sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
-    if (Math.abs(sw - w) <= 2) h = Math.max(h, sh);
-  }
-  return [w, h];
+  const w = window.innerWidth, h = window.innerHeight;
+  if (!standaloneIOS) return [w, h];
+  const tall = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+  return [w, Math.max(w > h ? short : tall, h)];
 }
+
+let viewW = 0, viewH = 0;
 
 // The canvas is deliberately taller than the visible area: whatever the home-screen webview reports,
 // the ground simply continues below the edge instead of showing a bar.
@@ -94,7 +98,12 @@ const BLEED = 160;
 let cssW = 1, cssH = 1;
 
 function resize() {
-  const [w, viewH] = viewSize();
+  const [w, vh] = viewSize();
+  viewW = w; viewH = vh;
+  if (standaloneIOS) {
+    document.documentElement.style.setProperty('--app-height', `${vh}px`);
+    document.documentElement.classList.add('fit-screen');
+  }
   cssW = w;
   cssH = viewH + BLEED;
   canvas.style.width = `${cssW}px`;
@@ -294,9 +303,16 @@ document.addEventListener('touchmove', (e) => {
   if (!(e.target instanceof Element && e.target.closest('.rank-list'))) e.preventDefault();
 }, { passive: false });
 for (const ev of ['touchend', 'pointerup', 'click', 'keydown']) document.addEventListener(ev, () => audio.unlock(), { passive: true });
-document.addEventListener('visibilitychange', () => { lastTime = null; if (!document.hidden) audio.unlock(); });
+document.addEventListener('visibilitychange', () => { lastTime = null; if (!document.hidden) { audio.unlock(); resize(); } });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 window.addEventListener('resize', resize);
+window.addEventListener('pageshow', resize);
+// iOS never scrolls this page: undo any shift it leaves after the keyboard closes.
+const resetScroll = () => { if (scrollX || scrollY) scrollTo(0, 0); };
+window.addEventListener('scroll', resetScroll, { passive: true });
+document.addEventListener('focusout', () => setTimeout(resetScroll, 60));
+// Safety net for size changes the system does not announce (home-screen iPhone); the check is cheap.
+if (standaloneIOS) setInterval(() => { const [w, h] = viewSize(); if (w !== viewW || h !== viewH) resize(); }, 1000);
 window.addEventListener('orientationchange', () => { setTimeout(resize, 100); setTimeout(resize, 400); });
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !overlayOpen && game) { e.preventDefault(); audio.unlock(); game.touchBegan(-1, -1); }
