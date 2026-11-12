@@ -4,9 +4,12 @@
   --dark: #543847;
   --orange: #e86100;
 }
+html { background: linear-gradient(#4ec0ca 0 55%, #ded895 55%); }  /* sky / ground, never black */
+body { background: transparent; }
+:root { --sa-top: env(safe-area-inset-top); --sa-bottom: env(safe-area-inset-bottom); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
-  margin: 0; height: 100%; min-height: 100%; overflow: hidden; background: #000;
+  margin: 0; height: 100%; min-height: 100%; overflow: hidden;
   overscroll-behavior: none; touch-action: manipulation;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   font-family: system-ui, sans-serif;
@@ -14,7 +17,7 @@ html, body {
 #game {
   position: fixed; left: 0; top: 0; width: 100%; height: 100%; display: block; touch-action: none;
   image-rendering: pixelated; image-rendering: crisp-edges; image-rendering: pixelated;
-  background: #000;
+  background: #ded895;
 }
 #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #fff; font-weight: 700; }
 

@@ -88,19 +88,25 @@ function viewSize() {
   return [w, h];
 }
 
+// The canvas is deliberately taller than the visible area: whatever the home-screen webview reports,
+// the ground simply continues below the edge instead of showing a bar.
+const BLEED = 160;
 let cssW = 1, cssH = 1;
 
 function resize() {
-  [cssW, cssH] = viewSize();
+  const [w, viewH] = viewSize();
+  cssW = w;
+  cssH = viewH + BLEED;
   canvas.style.width = `${cssW}px`;
   canvas.style.height = `${cssH}px`;
-  const S = Math.min(cssW / GAME_W, cssH / GAME_H); // CSS px per game unit
+  const S = Math.min(cssW / GAME_W, viewH / GAME_H); // CSS px per game unit
   const k = RENDER_SCALE;
   canvas.width = Math.max(1, Math.round((cssW / S) * k));
   canvas.height = Math.max(1, Math.round((cssH / S) * k));
-  const extra = canvas.height / k - GAME_H;
-  const top = Math.min(Math.max(extra, 0) / 2, MAX_TOP_MARGIN);
-  layout = { S: k, ox: (canvas.width - GAME_W * k) / 2, oy: top * k, top, bottom: Math.max(extra - top, 0) };
+  const extra = Math.max(viewH / S - GAME_H, 0);
+  const top = Math.min(extra / 2, MAX_TOP_MARGIN);
+  const bottom = Math.max(cssH / S - GAME_H - top, 0);
+  layout = { S: k, ox: (canvas.width - GAME_W * k) / 2, oy: top * k, top, bottom };
 }
 
 // MARK: Render
@@ -234,6 +240,32 @@ Screens.onClose = () => { overlayOpen = false; };
 
 document.getElementById('btn-rank').addEventListener('click', openRanking);
 document.getElementById('btn-color').addEventListener('click', openColors);
+
+// Long-press the colour button for a screen diagnostics report (handy when a device misbehaves).
+{
+  let timer = null;
+  const btn = document.getElementById('btn-color');
+  btn.addEventListener('pointerdown', () => {
+    timer = setTimeout(() => {
+      timer = null;
+      const vv = window.visualViewport;
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;left:0;top:0;height:100%;width:1px;pointer-events:none';
+      document.body.appendChild(probe);
+      const fixedH = probe.getBoundingClientRect().height;
+      probe.remove();
+      const cs = getComputedStyle(document.documentElement);
+      alert(JSON.stringify({
+        inner: [innerWidth, innerHeight], screen: [screen.width, screen.height],
+        client: [document.documentElement.clientWidth, document.documentElement.clientHeight],
+        fixed100: fixedH, visual: vv ? [vv.width, vv.height] : null, standalone: navigator.standalone,
+        dpr: devicePixelRatio, canvas: [canvas.width, canvas.height], css: [cssW, cssH],
+        safe: ['top', 'bottom'].map((s) => cs.getPropertyValue(`--sa-${s}`)),
+      }));
+    }, 900);
+  });
+  for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) btn.addEventListener(ev, () => { if (timer) clearTimeout(timer); });
+}
 
 // MARK: Input
 
