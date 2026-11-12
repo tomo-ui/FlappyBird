@@ -1,5 +1,5 @@
 // Offline cache: the whole game is a handful of static files.
-const CACHE = 'flappybird-v1';
+const CACHE = 'flappybird-v2';
 const FILES = [
   './', 'index.html', 'style.css', 'game.js', 'pixelfont.js', 'ui.js', 'main.js', 'manifest.webmanifest',
   'assets/atlas.png', 'assets/atlas.txt',
@@ -17,13 +17,16 @@ self.addEventListener('activate', (e) => {
       .then(() => self.clients.claim()));
 });
 
-// Network first (so updates arrive), cache as the offline fallback.
+// Stale-while-revalidate: launch instantly from the cache, refresh it in the background
+// (an update shows up on the next launch). Falls back to the network when nothing is cached.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(
-    fetch(e.request).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy));
+  e.respondWith(caches.open(CACHE).then(async (cache) => {
+    const cached = await cache.match(e.request);
+    const refresh = fetch(e.request).then((res) => {
+      if (res.ok) cache.put(e.request, res.clone());
       return res;
-    }).catch(() => caches.match(e.request)));
+    }).catch(() => cached);
+    return cached || refresh;
+  }));
 });

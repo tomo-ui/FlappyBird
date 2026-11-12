@@ -1,7 +1,11 @@
 'use strict';
 
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { alpha: false });
+// Internal pixels per game unit. The canvas is far smaller than the physical screen and the browser
+// scales it up with nearest-neighbour, which is what keeps the pixel art sharp *and* the frame cheap
+// (a full-resolution 3x canvas on an iPhone costs ~8x more fill than this).
+const RENDER_SCALE = 2;
 const MAX_TOP_MARGIN = 54;
 
 let atlasImg = null;
@@ -21,7 +25,9 @@ const audio = {
   async load() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
-    this.ctx = new AC();
+    // iOS 16.4+: play through the media channel so the ring/silent switch does not mute the game.
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* unsupported */ }
+    this.ctx = new AC({ latencyHint: 'interactive' });
     await Promise.all(Object.entries(this.files).map(async ([name, file]) => {
       try {
         const data = await (await fetch(`audio/${file}.wav`)).arrayBuffer();
@@ -29,7 +35,18 @@ const audio = {
       } catch { /* sound is optional */ }
     }));
   },
-  unlock() { if (this.ctx && this.ctx.state !== 'running') this.ctx.resume(); },
+  unlock() {
+    if (!this.ctx) return;
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+    if (!this.primed) {
+      // A silent one-sample buffer started inside the gesture fully wakes the audio engine on iOS.
+      this.primed = true;
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.ctx.createBuffer(1, 1, 22050);
+      src.connect(this.ctx.destination);
+      src.start(0);
+    }
+  },
   play(name) {
     const buffer = this.buffers[name];
     if (!this.ctx || !buffer) return;
@@ -60,15 +77,30 @@ async function loadAtlas() {
 
 // MARK: Layout
 
+/** CSS size of the playfield. iOS home-screen apps can report an innerHeight that stops short of the
+ *  home-indicator strip, which showed up as a black bar; there the screen size is the truth. */
+function viewSize() {
+  let w = window.innerWidth, h = window.innerHeight;
+  if (navigator.standalone === true && h > w) {
+    const sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
+    if (Math.abs(sw - w) <= 2) h = Math.max(h, sh);
+  }
+  return [w, h];
+}
+
+let cssW = 1, cssH = 1;
+
 function resize() {
-  const dpr = window.devicePixelRatio || 1;
-  const cw = window.innerWidth, ch = window.innerHeight;
-  canvas.width = Math.round(cw * dpr);
-  canvas.height = Math.round(ch * dpr);
-  const S = Math.min(canvas.width / GAME_W, canvas.height / GAME_H);
-  const extra = canvas.height / S - GAME_H;
-  const top = Math.min(extra / 2, MAX_TOP_MARGIN);
-  layout = { S, ox: (canvas.width - GAME_W * S) / 2, oy: top * S, top, bottom: extra - top };
+  [cssW, cssH] = viewSize();
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  const S = Math.min(cssW / GAME_W, cssH / GAME_H); // CSS px per game unit
+  const k = RENDER_SCALE;
+  canvas.width = Math.max(1, Math.round((cssW / S) * k));
+  canvas.height = Math.max(1, Math.round((cssH / S) * k));
+  const extra = canvas.height / k - GAME_H;
+  const top = Math.min(Math.max(extra, 0) / 2, MAX_TOP_MARGIN);
+  layout = { S: k, ox: (canvas.width - GAME_W * k) / 2, oy: top * k, top, bottom: Math.max(extra - top, 0) };
 }
 
 // MARK: Render
@@ -100,9 +132,12 @@ function render() {
   ctx.setTransform(S, 0, 0, S, ox, oy);
   const margin = 8;
   // On wide screens (desktop) keep the game in its own column instead of letting pipes spill out.
-  ctx.beginPath();
-  ctx.rect(-margin, -(top + margin), GAME_W + 2 * margin, GAME_H + top + bottom + 2 * margin);
-  ctx.clip();
+  // (Clipping is skipped on phones, where the game fills the width: it slows down the canvas.)
+  if (ox > 2) {
+    ctx.beginPath();
+    ctx.rect(-margin, -(top + margin), GAME_W + 2 * margin, GAME_H + top + bottom + 2 * margin);
+    ctx.clip();
+  }
   ctx.translate(game.shakeX, game.shakeY);
 
   const sprites = game.sprites;
@@ -203,9 +238,9 @@ document.getElementById('btn-color').addEventListener('click', openColors);
 // MARK: Input
 
 function gamePoint(e) {
-  const dpr = window.devicePixelRatio || 1;
   const { S, ox, oy } = layout;
-  return [Math.floor((e.clientX * dpr - ox) / S), Math.floor((e.clientY * dpr - oy) / S)];
+  const px = e.clientX * (canvas.width / cssW), py = e.clientY * (canvas.height / cssH);
+  return [Math.floor((px - ox) / S), Math.floor((py - oy) / S)];
 }
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -223,10 +258,14 @@ canvas.addEventListener('pointerup', (e) => {
 });
 canvas.addEventListener('pointercancel', () => { if (game) game.touchEnded(-1000, -1000); });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', (e) => {
+  if (!(e.target instanceof Element && e.target.closest('.rank-list'))) e.preventDefault();
+}, { passive: false });
+for (const ev of ['touchend', 'pointerup', 'click', 'keydown']) document.addEventListener(ev, () => audio.unlock(), { passive: true });
+document.addEventListener('visibilitychange', () => { lastTime = null; if (!document.hidden) audio.unlock(); });
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+window.addEventListener('orientationchange', () => { setTimeout(resize, 100); setTimeout(resize, 400); });
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && !overlayOpen && game) { e.preventDefault(); audio.unlock(); game.touchBegan(-1, -1); }
 });
