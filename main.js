@@ -1,7 +1,13 @@
 'use strict';
 
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d', { alpha: false });
+// Two canvases: `buf` is the small off-screen game surface; `canvas` is what the user sees, at the real
+// screen resolution. Each frame is a single nearest-neighbour blit buf -> canvas. (CSS upscaling with
+// `image-rendering: pixelated` pushes iOS Safari onto a slow software path, which was the stutter.)
+const screenCtx = canvas.getContext('2d', { alpha: false });
+const buf = document.createElement('canvas');
+const ctx = buf.getContext('2d', { alpha: false });
+const MAX_DPR = 3;
 // Internal pixels per game unit. The canvas is far smaller than the physical screen and the browser
 // scales it up with nearest-neighbour, which is what keeps the pixel art sharp *and* the frame cheap
 // (a full-resolution 3x canvas on an iPhone costs ~8x more fill than this).
@@ -64,7 +70,12 @@ async function loadAtlas() {
     fetch('assets/atlas.txt').then((r) => r.text()),
     new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'assets/atlas.png'; }),
   ]);
-  atlasImg = img;
+  // Draw from a canvas, not the <img>: Safari may drop the decoded bitmap of an <img> under memory pressure
+  // and re-decode it mid-game (a periodic hitch); a canvas source stays resident.
+  const sheet = document.createElement('canvas');
+  sheet.width = img.width; sheet.height = img.height;
+  sheet.getContext('2d').drawImage(img, 0, 0);
+  atlasImg = sheet;
   for (const line of text.split(/\r?\n/)) {
     const f = line.trim().split(' ');
     if (f.length !== 7) continue;
@@ -110,12 +121,15 @@ function resize() {
   canvas.style.height = `${cssH}px`;
   const S = Math.min(cssW / GAME_W, viewH / GAME_H); // CSS px per game unit
   const k = RENDER_SCALE;
-  canvas.width = Math.max(1, Math.round((cssW / S) * k));
-  canvas.height = Math.max(1, Math.round((cssH / S) * k));
+  buf.width = Math.max(1, Math.round((cssW / S) * k));
+  buf.height = Math.max(1, Math.round((cssH / S) * k));
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
   const extra = Math.max(viewH / S - GAME_H, 0);
   const top = Math.min(extra / 2, MAX_TOP_MARGIN);
   const bottom = Math.max(cssH / S - GAME_H - top, 0);
-  layout = { S: k, ox: (canvas.width - GAME_W * k) / 2, oy: top * k, top, bottom };
+  layout = { S: k, ox: (buf.width - GAME_W * k) / 2, oy: top * k, top, bottom };
 }
 
 // MARK: Render
@@ -125,11 +139,13 @@ function drawSprite(s) {
   if (!r) return;
   ctx.globalAlpha = s.alpha;
   if (s.rotation !== null) {
-    ctx.save();
-    ctx.translate(s.x + r.w / 2, s.y + r.h / 2);
-    ctx.rotate(s.rotation * Math.PI / 180);
+    const a = s.rotation * Math.PI / 180, cos = Math.cos(a) * layout.S, sin = Math.sin(a) * layout.S;
+    // Same as translate(centre) + rotate(), set directly on top of the base transform (no save/restore).
+    const cx = s.x + r.w / 2 + game.shakeX, cy = s.y + r.h / 2 + game.shakeY;
+    ctx.setTransform(cos, sin, -sin, cos, layout.ox + cx * layout.S, layout.oy + cy * layout.S);
     ctx.drawImage(atlasImg, r.px, r.py, r.w, r.h, -r.w / 2, -r.h / 2, r.w, r.h);
-    ctx.restore();
+    ctx.setTransform(layout.S, 0, 0, layout.S, layout.ox, layout.oy);
+    ctx.translate(game.shakeX, game.shakeY);
   } else {
     ctx.drawImage(atlasImg, r.px, r.py, r.w, r.h, s.x, s.y, r.w, r.h);
   }
@@ -140,7 +156,7 @@ function render() {
   const { S, ox, oy, top, bottom } = layout;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, buf.width, buf.height);
   ctx.imageSmoothingEnabled = false;
 
   ctx.save();
@@ -173,28 +189,39 @@ function render() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   if (game.flash.value > 0 && !game.flash.done) {
     ctx.fillStyle = `rgba(255,255,255,${game.flash.value})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, buf.width, buf.height);
   }
   if (game.fade.value > 0) {
     ctx.fillStyle = `rgba(0,0,0,${game.fade.value})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, buf.width, buf.height);
   }
+
+  screenCtx.imageSmoothingEnabled = false;
+  screenCtx.drawImage(buf, 0, 0, canvas.width, canvas.height);
 }
 
 // MARK: Loop
 
 let lastTime = null;
 let accumulator = 0;
+const stats = { frames: 0, slow: 0, maxDt: 0, renderMax: 0, renderSum: 0 };
 
 function frame(now) {
   requestAnimationFrame(frame);
   const t = now / 1000;
   const step = 1 / 60;
-  if (lastTime !== null) accumulator = Math.min(accumulator + t - lastTime, 0.25);
-  else accumulator = step;
+  let dt = lastTime === null ? step : t - lastTime;
   lastTime = t;
-  // Round to whole ticks so display-timestamp jitter never produces a 0-then-2 tick stutter.
-  const ticks = Math.round(accumulator / step);
+  if (stats.frames++ > 5) {
+    if (dt > stats.maxDt) stats.maxDt = dt;
+    if (dt > step * 1.5) stats.slow++;
+  }
+  // Display timestamps jitter a little around the vsync period; snap them to exact multiples of half a
+  // tick (60 / 120 / 30 Hz) so a late frame never turns into a 0-then-2 tick hitch.
+  const half = step / 2, m = Math.round(dt / half);
+  if (m > 0 && Math.abs(dt - m * half) < 0.002) dt = m * half;
+  accumulator = Math.min(accumulator + dt, 0.25);
+  const ticks = Math.floor(accumulator / step + 0.5);
   for (let i = 0; i < ticks; i++) game.tick();
   accumulator -= ticks * step;
 
@@ -204,7 +231,11 @@ function frame(now) {
     game.savedBest = null;
   }
   syncUI();
+  const r0 = performance.now();
   render();
+  const rd = performance.now() - r0;
+  stats.renderSum += rd;
+  if (rd > stats.renderMax) stats.renderMax = rd;
 }
 
 // MARK: UI bridge
@@ -268,7 +299,9 @@ document.getElementById('btn-color').addEventListener('click', openColors);
         inner: [innerWidth, innerHeight], screen: [screen.width, screen.height],
         client: [document.documentElement.clientWidth, document.documentElement.clientHeight],
         fixed100: fixedH, visual: vv ? [vv.width, vv.height] : null, standalone: navigator.standalone,
-        dpr: devicePixelRatio, canvas: [canvas.width, canvas.height], css: [cssW, cssH],
+        dpr: devicePixelRatio, canvas: [canvas.width, canvas.height], buf: [buf.width, buf.height],
+        frames: stats.frames, slowFrames: stats.slow, maxFrameMs: +(stats.maxDt * 1000).toFixed(1),
+        renderAvgMs: +(stats.renderSum / Math.max(stats.frames, 1)).toFixed(2), renderMaxMs: +stats.renderMax.toFixed(1), css: [cssW, cssH],
         safe: ['top', 'bottom'].map((s) => cs.getPropertyValue(`--sa-${s}`)),
       }));
     }, 900);
@@ -280,7 +313,7 @@ document.getElementById('btn-color').addEventListener('click', openColors);
 
 function gamePoint(e) {
   const { S, ox, oy } = layout;
-  const px = e.clientX * (canvas.width / cssW), py = e.clientY * (canvas.height / cssH);
+  const px = e.clientX * (buf.width / cssW), py = e.clientY * (buf.height / cssH);
   return [Math.floor((px - ox) / S), Math.floor((py - oy) / S)];
 }
 
