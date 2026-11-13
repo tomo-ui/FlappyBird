@@ -155,25 +155,33 @@ function resize() {
 
 // MARK: Render
 
-function drawSprite(s) {
+function drawSprite(s, x, y, rotation) {
   const r = rects[s.name];
   if (!r) return;
   ctx.globalAlpha = s.alpha;
-  if (s.rotation !== null) {
-    const a = s.rotation * Math.PI / 180, cos = Math.cos(a) * layout.S, sin = Math.sin(a) * layout.S;
+  if (rotation !== null) {
+    const a = rotation * Math.PI / 180, cos = Math.cos(a) * layout.S, sin = Math.sin(a) * layout.S;
     // Same as translate(centre) + rotate(), set directly on top of the base transform (no save/restore).
-    const cx = s.x + r.w / 2 + game.shakeX, cy = s.y + r.h / 2 + game.shakeY;
+    const cx = x + r.w / 2 + game.shakeX, cy = y + r.h / 2 + game.shakeY;
     ctx.setTransform(cos, sin, -sin, cos, layout.ox + cx * layout.S, layout.oy + cy * layout.S);
     ctx.drawImage(atlasImg, r.px, r.py, r.w, r.h, -r.w / 2, -r.h / 2, r.w, r.h);
     ctx.setTransform(layout.S, 0, 0, layout.S, layout.ox, layout.oy);
     ctx.translate(game.shakeX, game.shakeY);
   } else {
-    ctx.drawImage(atlasImg, r.px, r.py, r.w, r.h, s.x, s.y, r.w, r.h);
+    ctx.drawImage(atlasImg, r.px, r.py, r.w, r.h, x, y, r.w, r.h);
   }
   ctx.globalAlpha = 1;
 }
 
-function render() {
+/** Period (in game units) of the scrolling ground pattern; the game wraps landX by 22 + 2 each lap. */
+const LAND_PERIOD = 24;
+
+/**
+ * Draws the game state between the previous and the current tick. The game itself steps at a fixed 60 Hz
+ * like the original; interpolating the picture by the leftover time (`alpha`) keeps motion smooth when a
+ * frame arrives late (e.g. right after a touch) or when the display runs at 120 Hz.
+ */
+function render(alpha = 1) {
   const { S, ox, oy, top, bottom } = layout;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#000';
@@ -199,7 +207,23 @@ function render() {
     const r = rects[bg];
     ctx.drawImage(atlasImg, r.px + 1, r.py + 1, r.w - 2, 1, -margin, -(top + margin), GAME_W + 2 * margin, top + margin);
   }
-  for (const s of sprites) drawSprite(s);
+  const k = layout.S;
+  for (let i = 0; i < sprites.length; i++) {
+    const s = sprites[i], p = prevSprites[i];
+    let x = s.x, y = s.y, rot = s.rotation;
+    if (p && p.name === s.name && alpha < 1) {
+      let dx = s.x - p.x;
+      const dy = s.y - p.y;
+      if (s.name === 'land' && dx > LAND_PERIOD / 2) dx -= LAND_PERIOD;
+      if (Math.abs(dx) <= 12 && Math.abs(dy) <= 12) {
+        // Snap to the buffer's pixel grid so interpolated sprites stay crisp.
+        x = Math.round((p.x + dx * alpha) * k) / k;
+        y = Math.round((p.y + dy * alpha) * k) / k;
+        if (rot !== null && p.rotation !== null) rot = p.rotation + (s.rotation - p.rotation) * alpha;
+      }
+    }
+    drawSprite(s, x, y, rot);
+  }
   {
     // Ground row stretched below the game area; also hides the panel's slide-in from below the screen.
     const r = rects.land;
@@ -225,6 +249,7 @@ function render() {
 
 let lastTime = null;
 let accumulator = 0;
+let prevSprites = [];
 const stats = { frames: 0, slow: 0, maxDt: 0, renderMax: 0, renderSum: 0 };
 
 function frame(now) {
@@ -237,14 +262,13 @@ function frame(now) {
     if (dt > stats.maxDt) stats.maxDt = dt;
     if (dt > step * 1.5) stats.slow++;
   }
-  // Display timestamps jitter a little around the vsync period; snap them to exact multiples of half a
-  // tick (60 / 120 / 30 Hz) so a late frame never turns into a 0-then-2 tick hitch.
-  const half = step / 2, m = Math.round(dt / half);
-  if (m > 0 && Math.abs(dt - m * half) < 0.002) dt = m * half;
   accumulator = Math.min(accumulator + dt, 0.25);
-  const ticks = Math.floor(accumulator / step + 0.5);
-  for (let i = 0; i < ticks; i++) game.tick();
-  accumulator -= ticks * step;
+  while (accumulator >= step) {
+    prevSprites = game.sprites;
+    game.tick();
+    accumulator -= step;
+  }
+  const alpha = accumulator / step;
 
   // Start sounds after this frame's drawing so audio work never delays a frame.
   const sounds = game.drainSounds();
@@ -255,7 +279,7 @@ function frame(now) {
   }
   syncUI();
   const r0 = performance.now();
-  render();
+  render(alpha);
   const rd = performance.now() - r0;
   stats.renderSum += rd;
   if (rd > stats.renderMax) stats.renderMax = rd;
