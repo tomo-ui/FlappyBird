@@ -22,6 +22,18 @@ let layout = { S: 1, ox: 0, oy: 0, top: 0, bottom: 0 };
 let uiBirdStyle = Ranking.birdStyle;
 let overlayOpen = false;
 
+// A non-passive touchmove listener makes iOS wait for the main thread on every finger movement, which
+// showed up as a hitch right after each flap. It is only needed while an overlay is open (to stop the
+// page rubber-banding), so it is attached just then; the game canvas itself uses touch-action: none.
+const blockTouchMove = (e) => {
+  if (!(e.target instanceof Element && e.target.closest('.rank-list'))) e.preventDefault();
+};
+function setOverlay(open) {
+  overlayOpen = open;
+  if (open) document.addEventListener('touchmove', blockTouchMove, { passive: false });
+  else document.removeEventListener('touchmove', blockTouchMove);
+}
+
 // MARK: Audio (WebAudio; unlocked by the first touch)
 
 const audio = {
@@ -44,6 +56,15 @@ const audio = {
   unlock() {
     if (!this.ctx) return;
     if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+    if (!this.keepAlive) {
+      // A looping silent source keeps the audio session/engine active, so the first sound after a quiet
+      // moment does not have to spin it up (that stall was visible as a hitch on every flap).
+      this.keepAlive = this.ctx.createBufferSource();
+      this.keepAlive.buffer = this.ctx.createBuffer(1, 22050, 22050);
+      this.keepAlive.loop = true;
+      this.keepAlive.connect(this.ctx.destination);
+      this.keepAlive.start(0);
+    }
     if (!this.primed) {
       // A silent one-sample buffer started inside the gesture fully wakes the audio engine on iOS.
       this.primed = true;
@@ -225,7 +246,9 @@ function frame(now) {
   for (let i = 0; i < ticks; i++) game.tick();
   accumulator -= ticks * step;
 
-  for (const s of game.drainSounds()) audio.play(s);
+  // Start sounds after this frame's drawing so audio work never delays a frame.
+  const sounds = game.drainSounds();
+  if (sounds.length) setTimeout(() => sounds.forEach((s) => audio.play(s)), 0);
   if (game.savedBest !== null) {
     Store.set('bestScore', String(game.savedBest));
     game.savedBest = null;
@@ -264,19 +287,19 @@ function syncUI() {
   }
 }
 
-function openRanking() { if (!overlayOpen) { overlayOpen = true; Screens.ranking(); } }
+function openRanking() { if (!overlayOpen) { setOverlay(true); Screens.ranking(); } }
 function openColors() {
   if (overlayOpen) return;
-  overlayOpen = true;
+  setOverlay(true);
   Screens.colors(uiBirdStyle, (i) => { uiBirdStyle = i; Ranking.birdStyle = i; swatchEl.style.background = swatchColor(i); });
 }
 function openName(score) {
   if (overlayOpen) Screens.close();
-  overlayOpen = true;
+  setOverlay(true);
   Screens.name(score, (saved) => { if (saved) setTimeout(openRanking, 0); });
 }
 
-Screens.onClose = () => { overlayOpen = false; };
+Screens.onClose = () => { setOverlay(false); };
 
 document.getElementById('btn-rank').addEventListener('click', openRanking);
 document.getElementById('btn-color').addEventListener('click', openColors);
@@ -332,11 +355,12 @@ canvas.addEventListener('pointerup', (e) => {
 });
 canvas.addEventListener('pointercancel', () => { if (game) game.touchEnded(-1000, -1000); });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
-document.addEventListener('touchmove', (e) => {
-  if (!(e.target instanceof Element && e.target.closest('.rank-list'))) e.preventDefault();
-}, { passive: false });
 for (const ev of ['touchend', 'pointerup', 'click', 'keydown']) document.addEventListener(ev, () => audio.unlock(), { passive: true });
-document.addEventListener('visibilitychange', () => { lastTime = null; if (!document.hidden) { audio.unlock(); resize(); } });
+document.addEventListener('visibilitychange', () => {
+  lastTime = null;
+  if (document.hidden) { if (audio.ctx && audio.ctx.state === 'running') audio.ctx.suspend().catch(() => {}); }
+  else { audio.unlock(); resize(); }
+});
 document.addEventListener('gesturestart', (e) => e.preventDefault());
 window.addEventListener('resize', resize);
 window.addEventListener('pageshow', resize);
